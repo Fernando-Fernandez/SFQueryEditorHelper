@@ -3,15 +3,18 @@
  *
  * Responsibilities:
  *  1. Patch window.fetch and XMLHttpRequest BEFORE Salesforce scripts load.
- *  2. Detect query responses (dataRows + metadata).
- *  3. Accumulate partial results (initial batch + remaining rows) keyed by queryId.
- *  4. Once all rows are in, show an in-page toast with a "Download CSV" button.
- *  5. Post a lightweight message so the ISOLATED-world bridge can update the
- *     extension badge via the background service worker.
+ *  2. Detect DC query responses (Aura envelope) and SOQL query responses
+ *     (Developer Console / Tooling API).
+ *  3. Accumulate DC partial results keyed by queryId; show a Shadow DOM toast
+ *     once complete (or after a 5-second timeout for silently capped results).
+ *  4. Show a Shadow DOM toast for SOQL results, filtering out background
+ *     Tooling API queries via the columns=true preflight arm/consume pattern.
+ *  5. Offer in-place "Fetch all rows" pagination:
+ *     – DC queries re-submit the original Aura action with LIMIT/OFFSET.
+ *     – SOQL queries chain through nextRecordsUrl GETs.
  *
- * NOTE: This script runs in the MAIN world and therefore has NO access to any
- *       chrome.* extension APIs. Communication with the extension happens via
- *       window.postMessage → content-bridge.js (ISOLATED world).
+ * NOTE: This script runs in the MAIN world and therefore has NO access to
+ *       chrome.* extension APIs.
  */
 (function () {
   'use strict';
