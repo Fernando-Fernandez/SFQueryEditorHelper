@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *  1. Patch window.fetch and XMLHttpRequest BEFORE Salesforce scripts load.
- *  2. Detect DC query responses (dataRows + metadata).
+ *  2. Detect query responses (dataRows + metadata).
  *  3. Accumulate partial results (initial batch + remaining rows) keyed by queryId.
  *  4. Once all rows are in, show an in-page toast with a "Download CSV" button.
  *  5. Post a lightweight message so the ISOLATED-world bridge can update the
@@ -477,170 +477,14 @@
           <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
         </div>`;
 
-    shadow.innerHTML = `
-      <style>
-        :host { all: initial; }
-
-        .toast {
-          position: fixed;
-          bottom: 24px;
-          right: 24px;
-          background: #ffffff;
-          border: 1px solid #dddbda;
-          border-left: 4px solid #0176d3;
-          border-radius: 6px;
-          box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
-          padding: 16px 18px 14px;
-          z-index: 2147483647;
-          font-family: -apple-system, BlinkMacSystemFont, 'Salesforce Sans',
-                       'Segoe UI', Helvetica, Arial, sans-serif;
-          min-width: 285px;
-          max-width: 420px;
-          animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
-        }
-
-        @keyframes slide-in {
-          from { opacity: 0; transform: translateX(110%); }
-          to   { opacity: 1; transform: translateX(0); }
-        }
-
-        .toast.closing {
-          animation: slide-out 0.25s cubic-bezier(0.4, 0, 0.2, 1) both;
-        }
-
-        @keyframes slide-out {
-          to { opacity: 0; transform: translateX(110%); }
-        }
-
-        .header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 8px;
-          margin-bottom: 4px;
-        }
-
-        .title {
-          font-size: 14px;
-          font-weight: 600;
-          color: #032d60;
-          line-height: 1.3;
-        }
-
-        .close-btn {
-          background: none;
-          border: none;
-          cursor: pointer;
-          color: #706e6b;
-          font-size: 20px;
-          line-height: 1;
-          padding: 0 2px;
-          flex-shrink: 0;
-          margin-top: -2px;
-        }
-        .close-btn:hover { color: #032d60; }
-        .close-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .meta {
-          font-size: 12px;
-          color: #706e6b;
-          margin-bottom: 10px;
-        }
-
-        .warning-banner {
-          font-size: 11px;
-          color: #a8660a;
-          background: #fef3cd;
-          border: 1px solid #f5c518;
-          border-radius: 4px;
-          padding: 5px 8px;
-          margin-bottom: 10px;
-        }
-
-        .actions {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .btn {
-          padding: 6px 14px;
-          border-radius: 4px;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          border: 1px solid transparent;
-          transition: background 0.15s;
-        }
-        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-        .btn-download {
-          background: #0176d3;
-          color: #fff;
-          border-color: #0176d3;
-        }
-        .btn-download:hover:not(:disabled) { background: #014486; border-color: #014486; }
-
-        .btn-download-limited {
-          background: #fff;
-          color: #0176d3;
-          border-color: #0176d3;
-        }
-        .btn-download-limited:hover:not(:disabled) { background: #f0f7ff; }
-
-        .btn-fetch-all {
-          background: #2e844a;
-          color: #fff;
-          border-color: #2e844a;
-        }
-        .btn-fetch-all:hover:not(:disabled) { background: #1d5e35; border-color: #1d5e35; }
-
-        .btn-dismiss {
-          background: #f3f2f2;
-          color: #3e3e3c;
-          border-color: #dddbda;
-        }
-        .btn-dismiss:hover:not(:disabled) { background: #e5e5e5; }
-
-        .progress-wrap { margin-top: 10px; }
-
-        .progress-bar-track {
-          height: 6px;
-          background: #e5e5e5;
-          border-radius: 3px;
-          overflow: hidden;
-        }
-
-        .progress-bar-fill {
-          height: 100%;
-          background: #2e844a;
-          border-radius: 3px;
-          width: 0%;
-          transition: width 0.3s ease;
-        }
-
-        .progress-text {
-          font-size: 11px;
-          color: #706e6b;
-          margin-top: 4px;
-        }
-        .progress-text.error { color: #c23934; }
-      </style>
-
-      <div class="toast" id="toast">
-        <div class="header">
-          <span class="title">&#x1F4CA; DC Query Result Ready</span>
-          <button class="close-btn" id="close" title="Dismiss">&times;</button>
-        </div>
-        <div class="meta">
-          ${acc.returnedRows.toLocaleString()} row${acc.returnedRows !== 1 ? 's' : ''}
-          &bull;
-          ${columns.length} column${columns.length !== 1 ? 's' : ''}
-          ${acc.queryId ? `&bull; <code style="font-size:11px">${acc.queryId.slice(-12)}</code>` : ''}
-        </div>
-        ${actionsHtml}
-      </div>
+    const title = '&#x1F4CA; Query Result Ready';
+    const meta = `
+      ${acc.returnedRows.toLocaleString()} row${acc.returnedRows !== 1 ? 's' : ''}
+      &bull;
+      ${columns.length} column${columns.length !== 1 ? 's' : ''}
+      ${acc.queryId ? `&bull; <code style="font-size:11px">${acc.queryId.slice(-12)}</code>` : ''}
     `;
+    window.__SF_DC_TOAST__.buildShadow(shadow, { title, meta, actionsHtml });
 
     currentToastHost = host;
 
@@ -747,170 +591,14 @@
           <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
         </div>`;
 
-    shadow.innerHTML = `
-      <style>
-        :host { all: initial; }
-
-        .toast {
-          position: fixed;
-          bottom: 24px;
-          right: 24px;
-          background: #ffffff;
-          border: 1px solid #dddbda;
-          border-left: 4px solid #0176d3;
-          border-radius: 6px;
-          box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
-          padding: 16px 18px 14px;
-          z-index: 2147483647;
-          font-family: -apple-system, BlinkMacSystemFont, 'Salesforce Sans',
-                       'Segoe UI', Helvetica, Arial, sans-serif;
-          min-width: 285px;
-          max-width: 420px;
-          animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
-        }
-
-        @keyframes slide-in {
-          from { opacity: 0; transform: translateX(110%); }
-          to   { opacity: 1; transform: translateX(0); }
-        }
-
-        .toast.closing {
-          animation: slide-out 0.25s cubic-bezier(0.4, 0, 0.2, 1) both;
-        }
-
-        @keyframes slide-out {
-          to { opacity: 0; transform: translateX(110%); }
-        }
-
-        .header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 8px;
-          margin-bottom: 4px;
-        }
-
-        .title {
-          font-size: 14px;
-          font-weight: 600;
-          color: #032d60;
-          line-height: 1.3;
-        }
-
-        .close-btn {
-          background: none;
-          border: none;
-          cursor: pointer;
-          color: #706e6b;
-          font-size: 20px;
-          line-height: 1;
-          padding: 0 2px;
-          flex-shrink: 0;
-          margin-top: -2px;
-        }
-        .close-btn:hover { color: #032d60; }
-        .close-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .meta {
-          font-size: 12px;
-          color: #706e6b;
-          margin-bottom: 10px;
-        }
-
-        .warning-banner {
-          font-size: 11px;
-          color: #a8660a;
-          background: #fef3cd;
-          border: 1px solid #f5c518;
-          border-radius: 4px;
-          padding: 5px 8px;
-          margin-bottom: 10px;
-        }
-
-        .actions {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .btn {
-          padding: 6px 14px;
-          border-radius: 4px;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          border: 1px solid transparent;
-          transition: background 0.15s;
-        }
-        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-        .btn-download {
-          background: #0176d3;
-          color: #fff;
-          border-color: #0176d3;
-        }
-        .btn-download:hover:not(:disabled) { background: #014486; border-color: #014486; }
-
-        .btn-download-limited {
-          background: #fff;
-          color: #0176d3;
-          border-color: #0176d3;
-        }
-        .btn-download-limited:hover:not(:disabled) { background: #f0f7ff; }
-
-        .btn-fetch-all {
-          background: #2e844a;
-          color: #fff;
-          border-color: #2e844a;
-        }
-        .btn-fetch-all:hover:not(:disabled) { background: #1d5e35; border-color: #1d5e35; }
-
-        .btn-dismiss {
-          background: #f3f2f2;
-          color: #3e3e3c;
-          border-color: #dddbda;
-        }
-        .btn-dismiss:hover:not(:disabled) { background: #e5e5e5; }
-
-        .progress-wrap { margin-top: 10px; }
-
-        .progress-bar-track {
-          height: 6px;
-          background: #e5e5e5;
-          border-radius: 3px;
-          overflow: hidden;
-        }
-
-        .progress-bar-fill {
-          height: 100%;
-          background: #2e844a;
-          border-radius: 3px;
-          width: 0%;
-          transition: width 0.3s ease;
-        }
-
-        .progress-text {
-          font-size: 11px;
-          color: #706e6b;
-          margin-top: 4px;
-        }
-        .progress-text.error { color: #c23934; }
-      </style>
-
-      <div class="toast" id="toast">
-        <div class="header">
-          <span class="title">&#x1F4CA; SOQL Query Result Ready</span>
-          <button class="close-btn" id="close" title="Dismiss">&times;</button>
-        </div>
-        <div class="meta">
-          ${records.length.toLocaleString()} row${records.length !== 1 ? 's' : ''}
-          &bull;
-          ${columns.length} column${columns.length !== 1 ? 's' : ''}
-          ${records[0]?.attributes?.type ? `&bull; <code style="font-size:11px">${records[0].attributes.type}</code>` : ''}
-        </div>
-        ${actionsHtml}
-      </div>
+    const title = '&#x1F4CA; SOQL Query Result Ready';
+    const meta = `
+      ${records.length.toLocaleString()} row${records.length !== 1 ? 's' : ''}
+      &bull;
+      ${columns.length} column${columns.length !== 1 ? 's' : ''}
+      ${records[0]?.attributes?.type ? `&bull; <code style="font-size:11px">${records[0].attributes.type}</code>` : ''}
     `;
+    window.__SF_DC_TOAST__.buildShadow(shadow, { title, meta, actionsHtml });
 
     currentToastHost = host;
 
@@ -983,6 +671,14 @@
   // REST endpoint requires an explicit "Authorization: OAuth <sessionId>" header.
   let _soqlAuthHeader = null;
 
+  // Tooling API queries from the Dev Console's "Use Tooling API" checkbox follow
+  // the same two-step pattern as regular queries: a columns=true preflight fires
+  // first, then the actual data request.  Background tooling queries (ApexClass,
+  // ApexOrgWideCoverage, etc.) go straight to the data request with no preflight.
+  // We arm this flag on the preflight request and consume it on the data response,
+  // so only user-initiated tooling queries produce a toast.
+  let _toolingQueryArmed = false;
+
   function processResponse(data, requestUrl, auraInfo = null) {
     if (!isDCQueryResponse(data)) return;
 
@@ -1031,7 +727,6 @@
         if (acc._flushTimer) clearTimeout(acc._flushTimer);
         store.delete(queryId);
         showToast(acc);
-        postBadgeMessage(acc.returnedRows, getColumnNames(acc.metadata).length);
       } else if (acc.returnedRows > 0) {
         // We have rows but haven't hit totalRows yet.  The server may have
         // silently capped the result (e.g. the automatic 1 000-row limit), so
@@ -1044,7 +739,6 @@
           if (!store.has(queryId)) return; // already flushed
           store.delete(queryId);
           showToast(acc);
-          postBadgeMessage(acc.returnedRows, getColumnNames(acc.metadata).length);
         }, 5_000);
       }
     } else {
@@ -1060,7 +754,6 @@
         totalRows: thisPageRows,
       };
       showToast(acc);
-      postBadgeMessage(acc.returnedRows, getColumnNames(acc.metadata).length);
     }
   }
 
@@ -1086,25 +779,22 @@
     if (data.records.length === 0) return;
 
     if (typeof requestUrl === 'string') {
-      if (/\/tooling\/query[/?]/.test(requestUrl)) return;         // 1. Tooling API
-      if (/[?&]columns=true/.test(requestUrl)) return;             // 2. Metadata preflight
-      if (/\/query\/[A-Za-z0-9]+-\d+/.test(requestUrl)) return;   // 3. Continuation fetch
+      if (/[?&]columns=true/.test(requestUrl)) return;             // 1. Metadata preflight (no records)
+      if (/\/query\/[A-Za-z0-9]+-\d+/.test(requestUrl)) return;   // 2. Continuation fetch
+
+      // Tooling API: allow only if armed by a preceding columns=true preflight.
+      // Background queries (ApexClass, ApexOrgWideCoverage, …) skip the preflight
+      // entirely and will never arm the flag, so they stay filtered out.
+      if (/\/tooling\/query[/?]/.test(requestUrl)) {
+        if (_toolingQueryArmed) {
+          _toolingQueryArmed = false; // consume — one toast per Execute click
+        } else {
+          return; // background tooling query
+        }
+      }
     }
 
-    const columns = data.records[0]
-      ? Object.keys(data.records[0]).filter((k) => k !== 'attributes')
-      : [];
-
     showSoqlToast(data);
-    postBadgeMessage(data.records.length, columns.length);
-  }
-
-  /** Notify the ISOLATED world bridge so it can update the extension badge. */
-  function postBadgeMessage(rowCount, colCount) {
-    window.postMessage(
-      { type: `${NS}:QUERY_READY`, rowCount, colCount },
-      '*'
-    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1124,6 +814,11 @@
 
     // args[1] is the fetch init object; body is a plain string for Aura POSTs
     const auraInfo = extractAuraInfo(args[1]?.body ?? null, requestUrl);
+
+    // Arm tooling query flag when the columns=true preflight fires via fetch
+    if (/\/tooling\/query[/?]/.test(requestUrl) && /[?&]columns=true/.test(requestUrl)) {
+      _toolingQueryArmed = true;
+    }
 
     const response = await _origFetch.apply(this, args);
 
@@ -1173,6 +868,15 @@
     // args[0] is the request body — a plain string for form-encoded Aura POSTs
     this[NS + '_auraInfo'] = extractAuraInfo(args[0] ?? null, this[NS + '_url']);
 
+    // Arm tooling query flag when the columns=true preflight fires via XHR
+    if (
+      typeof this[NS + '_url'] === 'string' &&
+      /\/tooling\/query[/?]/.test(this[NS + '_url']) &&
+      /[?&]columns=true/.test(this[NS + '_url'])
+    ) {
+      _toolingQueryArmed = true;
+    }
+
     this.addEventListener('load', () => {
       if (this.status < 200 || this.status >= 300) return;
       const ct = this.getResponseHeader('content-type') || '';
@@ -1188,5 +892,5 @@
 
   // ─────────────────────────────────────────────────────────────────────────────
 
-  console.debug('[SF DC CSV Exporter] Initialized – monitoring DC query responses');
+  console.debug('[SF CSV Exporter] Initialized – monitoring query responses');
 })();

@@ -4,18 +4,12 @@
   "version": "1.0.0",
   "description": "Make Salesforce query results exportable as CSV download",
 
-  "permissions": ["storage", "tabs"],
-
   "host_permissions": [
     "https://*.salesforce.com/*",
     "https://*.force.com/*",
     "https://*.lightning.force.com/*",
     "https://*.salesforceliveagent.com/*"
   ],
-
-  "background": {
-    "service_worker": "background.js"
-  },
 
   "content_scripts": [
     {
@@ -24,20 +18,9 @@
         "https://*.force.com/*",
         "https://*.lightning.force.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["content-toast.js", "content.js"],
       "run_at": "document_start",
       "world": "MAIN",
-      "all_frames": false
-    },
-    {
-      "matches": [
-        "https://*.salesforce.com/*",
-        "https://*.force.com/*",
-        "https://*.lightning.force.com/*"
-      ],
-      "js": ["content-bridge.js"],
-      "run_at": "document_start",
-      "world": "ISOLATED",
       "all_frames": false
     }
   ],

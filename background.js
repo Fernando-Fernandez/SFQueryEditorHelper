@@ -1,7 +1,7 @@
 /**
  * background.js – Manifest V3 Service Worker
  *
- * Tracks how many DC query results have been intercepted per tab.
+ * Tracks how many query results have been intercepted per tab.
  * Displays the count as an action-button badge so users know there
  * are downloadable results even if they've dismissed the in-page toast.
  *

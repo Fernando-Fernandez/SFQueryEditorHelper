@@ -30,8 +30,8 @@ SFQueryEditorHelper/
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (toggle, top-right)
 3. Click **Load unpacked** → select this folder
-4. Navigate to any `*.salesforce.com` page, run a DC query, and the toast will appear
+4. Navigate to any `*.salesforce.com` page, run a query, and the toast will appear
 
 ## One thing to verify
 
-Open DevTools → Network on your DC Query Editor page, run a query, and confirm the actual endpoint URLs. If the "remaining rows" response embeds `status.queryId` in its body (most likely yes), accumulation will merge both halves automatically. If it doesn't, the extension will still show two separate toasts (one per response), both downloadable. Adjust `extractQueryIdFromUrl` in `content.js` with the real URL pattern if needed.
+Open DevTools → Network on your Query Editor page, run a query, and confirm the actual endpoint URLs. If the "remaining rows" response embeds `status.queryId` in its body (most likely yes), accumulation will merge both halves automatically. If it doesn't, the extension will still show two separate toasts (one per response), both downloadable. Adjust `extractQueryIdFromUrl` in `content.js` with the real URL pattern if needed.

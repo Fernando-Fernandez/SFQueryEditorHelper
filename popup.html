@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SF DC Query CSV Exporter</title>
+  <title>SF Query CSV Exporter</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -48,38 +48,23 @@
       margin: 14px 14px 0;
       padding: 12px 14px;
       border-radius: 6px;
-      border: 1px solid #dddbda;
+      border: 1px solid #2e844a;
+      background: #f2fbf2;
       display: flex;
       align-items: center;
       gap: 12px;
     }
 
-    .status-card.has-results {
-      border-color: #0176d3;
-      background: #f0f7ff;
-    }
-
     .status-icon {
-      font-size: 28px;
+      font-size: 22px;
       line-height: 1;
       flex-shrink: 0;
     }
 
-    .status-count {
-      font-size: 28px;
-      font-weight: 700;
-      color: #0176d3;
-      line-height: 1;
-    }
-
     .status-label {
       font-size: 12px;
-      color: #706e6b;
-      margin-top: 2px;
-    }
-
-    .status-card.has-results .status-label {
-      color: #014486;
+      font-weight: 600;
+      color: #2e844a;
     }
 
     /* ── How-to section ── */
@@ -124,12 +109,9 @@
     </div>
   </div>
 
-  <div class="status-card" id="statusCard">
-    <div class="status-icon" id="statusIcon">&#x23F3;</div>
-    <div>
-      <div class="status-count" id="statusCount" style="display:none"></div>
-      <div class="status-label" id="statusLabel">Waiting for a query to run…</div>
-    </div>
+  <div class="status-card">
+    <div class="status-icon">&#x2705;</div>
+    <div class="status-label">Active on Salesforce pages</div>
   </div>
 
   <div class="section">
@@ -146,6 +128,5 @@
     Results download directly from the page &mdash; no data sent to servers.
   </div>
 
-  <script src="popup.js"></script>
 </body>
 </html>
