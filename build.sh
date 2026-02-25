@@ -1,1 +1,1 @@
-zip -r SalesforceFieldUsageExtension.zip manifest.json LICENSE README.MD popup.* report.* scripts/ images/
+zip -r SSFQueryEditorHelper.zip manifest.json LICENSE README.MD popup.* *.js images/
