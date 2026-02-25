@@ -6,7 +6,7 @@
  *  2. Detect DC query responses (Aura envelope) and SOQL query responses
  *     (Developer Console / Tooling API).
  *  3. Accumulate DC partial results keyed by queryId; show a Shadow DOM toast
- *     once complete (or after a 5-second timeout for silently capped results).
+ *     once complete (or after a 1.5-second timeout for silently capped results).
  *  4. Show a Shadow DOM toast for SOQL results, filtering out background
  *     Tooling API queries via the columns=true preflight arm/consume pattern.
  *  5. Offer in-place "Fetch all rows" pagination:
@@ -129,143 +129,8 @@
       .trim();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // CSV generation
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Extract an ordered array of column names from whatever shape metadata is.
-   *
-   * Data Cloud API returns metadata as an array of objects.  Each object may
-   * use different property names across API versions; we try the common ones.
-   */
-  function getColumnNames(metadata) {
-    if (Array.isArray(metadata)) {
-      return metadata.map(
-        (col) =>
-          col.name ??
-          col.label ??
-          col.displayName ??
-          col.columnName ??
-          col.fieldName ??
-          String(col)
-      );
-    }
-    if (metadata && Array.isArray(metadata.fields)) {
-      return metadata.fields.map(
-        (f) => f.name ?? f.label ?? f.fieldName ?? String(f)
-      );
-    }
-    return [];
-  }
-
-  function escapeCell(val) {
-    if (val === null || val === undefined) return '';
-    const s = String(val);
-    // Wrap in quotes if the value contains a delimiter, quote, or line break
-    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  }
-
-  function buildCSV(acc) {
-    const columns = getColumnNames(acc.metadata);
-    const lines = [];
-
-    // Log the raw shapes so key-mapping issues are visible in DevTools → Console
-    if (acc.dataRows.length > 0) {
-      console.debug('[SF DC CSV Exporter] metadata[0]:', JSON.stringify(acc.metadata[0]));
-      console.debug('[SF DC CSV Exporter] dataRows[0]: ', JSON.stringify(acc.dataRows[0]));
-      console.debug('[SF DC CSV Exporter] resolved columns:', columns);
-    }
-
-    // Header row
-    if (columns.length > 0) {
-      lines.push(columns.map(escapeCell).join(','));
-    }
-
-    for (const entry of acc.dataRows) {
-      // Each entry is { row: [val1, val2, …] } — unwrap the inner array
-      const values = Array.isArray(entry?.row) ? entry.row : entry;
-      lines.push(values.map(escapeCell).join(','));
-    }
-
-    return lines.join('\r\n');
-  }
-
-  function triggerDownload(acc) {
-    const csv = buildCSV(acc);
-    // Prepend UTF-8 BOM so Excel opens the file with correct encoding
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = url;
-    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    const shortId = acc.queryId ? String(acc.queryId).slice(-8) : 'query';
-    a.download = `dc-query-${shortId}-${ts}.csv`;
-    a.style.display = 'none';
-
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 200);
-  }
-
-  /**
-   * Build a CSV from REST SOQL records.
-   *
-   * Records are plain objects with a nested `attributes` key added by SF:
-   *   { attributes: { type: "Account", url: "…" }, Id: "…", Name: "…" }
-   *
-   * We drop `attributes` from the CSV and use the remaining keys (in SELECT
-   * order, which Object.keys preserves) as column headers.  Nested objects
-   * (sub-selects / relationship fields) are serialised as JSON strings.
-   */
-  function buildCSVFromSoqlRecords(records) {
-    if (records.length === 0) return '';
-    const columns = Object.keys(records[0]).filter((k) => k !== 'attributes');
-
-    console.debug('[SF DC CSV Exporter] SOQL columns:', columns);
-    console.debug('[SF DC CSV Exporter] SOQL records[0]:', JSON.stringify(records[0]));
-
-    const lines = [columns.map(escapeCell).join(',')];
-    for (const record of records) {
-      lines.push(
-        columns.map((col) => {
-          const val = record[col];
-          // Relationship sub-selects return nested objects — flatten to JSON
-          if (val !== null && typeof val === 'object') return escapeCell(JSON.stringify(val));
-          return escapeCell(val);
-        }).join(',')
-      );
-    }
-    return lines.join('\r\n');
-  }
-
-  function triggerSoqlDownload(records) {
-    const csv = buildCSVFromSoqlRecords(records);
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = url;
-    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    // Use the SF object type from the first record's attributes if available
-    const objectType = (records[0]?.attributes?.type ?? 'soql').toLowerCase();
-    a.download = `${objectType}-query-${ts}.csv`;
-    a.style.display = 'none';
-
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 200);
-  }
+  // CSV helpers live in content-csv.js (loaded before this file).
+  const { getColumnNames, triggerDownload, triggerSoqlDownload } = window.__SF_DC_CSV__;
 
   /**
    * Fetch all rows by re-submitting paginated Aura requests to the same
@@ -733,7 +598,7 @@
       } else if (acc.returnedRows > 0) {
         // We have rows but haven't hit totalRows yet.  The server may have
         // silently capped the result (e.g. the automatic 1 000-row limit), so
-        // no further response will arrive.  Arm a 5-second timeout: if nothing
+        // no further response will arrive.  Arm a 1.5-second timeout: if nothing
         // else comes in for this queryId we flush whatever we have.
         // Normal multi-page queries return their remaining rows within
         // milliseconds, so the timer will be cancelled long before it fires.
@@ -742,7 +607,7 @@
           if (!store.has(queryId)) return; // already flushed
           store.delete(queryId);
           showToast(acc);
-        }, 5_000);
+        }, 1_500);
       }
     } else {
       // ── No queryId – treat as self-contained single-page result ──────────
@@ -850,6 +715,8 @@
   XMLHttpRequest.prototype.open = function (...args) {
     // Store the request URL so we can read it in the load handler
     this[NS + '_url'] = typeof args[1] === 'string' ? args[1] : '';
+    // args[2] is the async flag; false means synchronous (default: true)
+    this[NS + '_async'] = args[2] !== false;
     return _origOpen.apply(this, args);
   };
 
@@ -868,6 +735,20 @@
   };
 
   XMLHttpRequest.prototype.send = function (...args) {
+    // Synchronous XHRs (async=false) are not used by Salesforce query APIs.
+    // Chrome throws a NetworkError when a synchronous XHR is sent during page
+    // dismissal (e.g. Salesforce saving IDEWorkspace state on unload).
+    // Bypass all extension logic for sync XHRs and swallow that specific error
+    // so it doesn't surface as an error attributed to content.js.
+    if (!this[NS + '_async']) {
+      try {
+        return _origSend.apply(this, args);
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'NetworkError') return;
+        throw e;
+      }
+    }
+
     // args[0] is the request body — a plain string for form-encoded Aura POSTs
     this[NS + '_auraInfo'] = extractAuraInfo(args[0] ?? null, this[NS + '_url']);
 

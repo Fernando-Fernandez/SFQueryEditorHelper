@@ -1,7 +1,7 @@
 /**
  * content-toast.js — Shared toast template for SF Query Editor Helper.
  *
- * Loaded before content.js in the MAIN world (same JS execution context).
+ * Loaded before content.js in the MAIN "world" (same JS execution context).
  * Exposes window.__SF_DC_TOAST__.buildShadow so both showToast (DC queries)
  * and showSoqlToast (Developer Console queries) share one copy of the CSS
  * and one copy of the DOM skeleton.

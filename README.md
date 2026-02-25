@@ -11,19 +11,19 @@ Works in two places:
 ```
 SFQueryEditorHelper/
 ├── manifest.json        MV3 manifest
-├── content-toast.js     MAIN world – shared Shadow DOM toast template (CSS + builder)
-├── content.js           MAIN world – core engine (fetch/XHR patching, CSV generation)
+├── content-toast.js     MAIN "world" - shared Shadow DOM toast template (CSS + builder)
+├── content.js           MAIN "world" - core engine (fetch/XHR patching, CSV generation)
 └── popup.html           Extension popup (static info page)
 ```
 
 ## How it works
 
-Both scripts are injected at `document_start` in the **MAIN world**, so they patch `window.fetch` and `XMLHttpRequest` before any Salesforce script runs.
+Both scripts are injected at `document_start` in the **MAIN "world"**, so they patch `window.fetch` and `XMLHttpRequest` before any Salesforce script runs.
 
 ### Data Cloud queries (Aura/Lightning)
 
 1. Requests to the Aura endpoint (`/aura?r=…`) are intercepted. The form-encoded body is parsed to capture the SQL, action descriptor, and `aura.context` / `aura.token` for later pagination re-submission.
-2. Responses are unwrapped from the Lightning envelope (`actions[0].returnValue`) and accumulated in a `Map` keyed by `status.queryId`. When `returnedRows >= rowCount` (or after a 5-second timeout for silently capped results) a Shadow DOM toast appears.
+2. Responses are unwrapped from the Lightning envelope (`actions[0].returnValue`) and accumulated in a `Map` keyed by `status.queryId`. When `returnedRows >= rowCount` (or after a 1.5-second timeout for silently capped results) a Shadow DOM toast appears.
 3. If the result was capped at 1 000 rows, a **Fetch all N rows** button re-submits the same Aura action with `LIMIT 49999 OFFSET N` in a loop until all rows are retrieved. No bearer token needed — the re-submission uses the same origin and session cookies.
 
 ### Developer Console SOQL queries

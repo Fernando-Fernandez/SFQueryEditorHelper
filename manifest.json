@@ -18,7 +18,7 @@
         "https://*.force.com/*",
         "https://*.lightning.force.com/*"
       ],
-      "js": ["content-toast.js", "content.js"],
+      "js": ["content-toast.js", "content-csv.js", "content.js"],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": false
