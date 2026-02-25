@@ -37,6 +37,20 @@
     return rv != null && Array.isArray(rv.dataRows);
   }
 
+  /**
+   * Salesforce REST SOQL responses (Developer Console, Tooling API, etc.):
+   *   { totalSize: N, done: bool, records: [ { attributes: {type,url}, …fields } ] }
+   *
+   * Require the distinguishing trio of fields to avoid false positives.
+   */
+  function isSoqlQueryResponse(data) {
+    return (
+      Array.isArray(data?.records) &&
+      typeof data?.totalSize === 'number' &&
+      typeof data?.done === 'boolean'
+    );
+  }
+
   /** Unwrap the Aura envelope and return the inner returnValue object. */
   function unwrapPayload(data) {
     return data.actions[0].returnValue;
@@ -199,6 +213,58 @@
   }
 
   /**
+   * Build a CSV from REST SOQL records.
+   *
+   * Records are plain objects with a nested `attributes` key added by SF:
+   *   { attributes: { type: "Account", url: "…" }, Id: "…", Name: "…" }
+   *
+   * We drop `attributes` from the CSV and use the remaining keys (in SELECT
+   * order, which Object.keys preserves) as column headers.  Nested objects
+   * (sub-selects / relationship fields) are serialised as JSON strings.
+   */
+  function buildCSVFromSoqlRecords(records) {
+    if (records.length === 0) return '';
+    const columns = Object.keys(records[0]).filter((k) => k !== 'attributes');
+
+    console.debug('[SF DC CSV Exporter] SOQL columns:', columns);
+    console.debug('[SF DC CSV Exporter] SOQL records[0]:', JSON.stringify(records[0]));
+
+    const lines = [columns.map(escapeCell).join(',')];
+    for (const record of records) {
+      lines.push(
+        columns.map((col) => {
+          const val = record[col];
+          // Relationship sub-selects return nested objects — flatten to JSON
+          if (val !== null && typeof val === 'object') return escapeCell(JSON.stringify(val));
+          return escapeCell(val);
+        }).join(',')
+      );
+    }
+    return lines.join('\r\n');
+  }
+
+  function triggerSoqlDownload(records) {
+    const csv = buildCSVFromSoqlRecords(records);
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    // Use the SF object type from the first record's attributes if available
+    const objectType = (records[0]?.attributes?.type ?? 'soql').toLowerCase();
+    a.download = `${objectType}-query-${ts}.csv`;
+    a.style.display = 'none';
+
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
+  }
+
+  /**
    * Fetch all rows by re-submitting paginated Aura requests to the same
    * Lightning endpoint that the page itself uses.
    *
@@ -311,6 +377,61 @@
     }
 
     onDone(allRows, allMetadata ?? acc.metadata);
+  }
+
+  /**
+   * Fetch all SOQL rows by chaining through the REST `nextRecordsUrl` links.
+   *
+   * Each page is a plain GET to the same origin with session cookies.
+   * Uses _origFetch to bypass our own patch (avoids re-triggering toasts).
+   */
+  async function fetchAllSoqlRows(initialRecords, nextRecordsUrl, totalSize, { onProgress, onDone, onError }) {
+    let allRecords = [...initialRecords];
+    let currentNextUrl = nextRecordsUrl;
+
+    onProgress(allRecords.length, totalSize);
+
+    try {
+      while (currentNextUrl) {
+        // nextRecordsUrl is a path like /services/data/v66.0/query/01g…-2000
+        const fullUrl = currentNextUrl.startsWith('http')
+          ? currentNextUrl
+          : window.location.origin + currentNextUrl;
+
+        let resp;
+        try {
+          resp = await _origFetch(fullUrl, {
+            credentials: 'include',
+            headers: _soqlAuthHeader ? { Authorization: _soqlAuthHeader } : undefined,
+          });
+        } catch (networkErr) {
+          onError('Network error: ' + networkErr.message);
+          return;
+        }
+
+        if (!resp.ok) {
+          onError(`Server error ${resp.status}`);
+          return;
+        }
+
+        let page;
+        try {
+          page = await resp.json();
+        } catch (_) {
+          onError('Failed to parse response as JSON');
+          return;
+        }
+
+        allRecords = allRecords.concat(page.records ?? []);
+        currentNextUrl = page.done ? null : (page.nextRecordsUrl ?? null);
+        onProgress(allRecords.length, totalSize);
+      }
+    } catch (e) {
+      onError('Unexpected error: ' + e.message);
+      return;
+    }
+
+    onDone(allRecords);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -583,6 +704,267 @@
     }
   }
 
+  /**
+   * In-page toast for REST SOQL query results (Developer Console, etc.).
+   * Same Shadow DOM approach as showToast; data is the raw SOQL response object.
+   */
+  function showSoqlToast(data) {
+    if (currentToastHost) {
+      currentToastHost.remove();
+      currentToastHost = null;
+    }
+
+    const { records, totalSize, nextRecordsUrl } = data;
+    const columns = records.length > 0
+      ? Object.keys(records[0]).filter((k) => k !== 'attributes')
+      : [];
+    const isLimited = !data.done;
+    const canFetchAll = isLimited && !!nextRecordsUrl;
+
+    const host = document.createElement('div');
+    host.setAttribute('data-sf-dc-csv-exporter', '');
+    document.body.appendChild(host);
+
+    const shadow = host.attachShadow({ mode: 'open' });
+
+    const actionsHtml = isLimited
+      ? `
+        <div class="warning-banner">
+          Showing ${records.length.toLocaleString()} of ${totalSize.toLocaleString()} rows &mdash; query limit hit
+        </div>
+        <div class="actions">
+          ${canFetchAll ? `<button class="btn btn-fetch-all" id="fetchAll">Fetch all ${totalSize.toLocaleString()} rows</button>` : ''}
+          <button class="btn btn-download-limited" id="download">Download ${records.length.toLocaleString()} rows</button>
+          <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
+        </div>
+        <div class="progress-wrap" id="progressWrap" style="display:none">
+          <div class="progress-bar-track"><div class="progress-bar-fill" id="progressFill"></div></div>
+          <div class="progress-text" id="progressText"></div>
+        </div>`
+      : `
+        <div class="actions">
+          <button class="btn btn-download" id="download">Download CSV</button>
+          <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
+        </div>`;
+
+    shadow.innerHTML = `
+      <style>
+        :host { all: initial; }
+
+        .toast {
+          position: fixed;
+          bottom: 24px;
+          right: 24px;
+          background: #ffffff;
+          border: 1px solid #dddbda;
+          border-left: 4px solid #0176d3;
+          border-radius: 6px;
+          box-shadow: 0 6px 28px rgba(0, 0, 0, 0.18);
+          padding: 16px 18px 14px;
+          z-index: 2147483647;
+          font-family: -apple-system, BlinkMacSystemFont, 'Salesforce Sans',
+                       'Segoe UI', Helvetica, Arial, sans-serif;
+          min-width: 285px;
+          max-width: 420px;
+          animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+
+        @keyframes slide-in {
+          from { opacity: 0; transform: translateX(110%); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+
+        .toast.closing {
+          animation: slide-out 0.25s cubic-bezier(0.4, 0, 0.2, 1) both;
+        }
+
+        @keyframes slide-out {
+          to { opacity: 0; transform: translateX(110%); }
+        }
+
+        .header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 4px;
+        }
+
+        .title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #032d60;
+          line-height: 1.3;
+        }
+
+        .close-btn {
+          background: none;
+          border: none;
+          cursor: pointer;
+          color: #706e6b;
+          font-size: 20px;
+          line-height: 1;
+          padding: 0 2px;
+          flex-shrink: 0;
+          margin-top: -2px;
+        }
+        .close-btn:hover { color: #032d60; }
+        .close-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .meta {
+          font-size: 12px;
+          color: #706e6b;
+          margin-bottom: 10px;
+        }
+
+        .warning-banner {
+          font-size: 11px;
+          color: #a8660a;
+          background: #fef3cd;
+          border: 1px solid #f5c518;
+          border-radius: 4px;
+          padding: 5px 8px;
+          margin-bottom: 10px;
+        }
+
+        .actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .btn {
+          padding: 6px 14px;
+          border-radius: 4px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          border: 1px solid transparent;
+          transition: background 0.15s;
+        }
+        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .btn-download {
+          background: #0176d3;
+          color: #fff;
+          border-color: #0176d3;
+        }
+        .btn-download:hover:not(:disabled) { background: #014486; border-color: #014486; }
+
+        .btn-download-limited {
+          background: #fff;
+          color: #0176d3;
+          border-color: #0176d3;
+        }
+        .btn-download-limited:hover:not(:disabled) { background: #f0f7ff; }
+
+        .btn-fetch-all {
+          background: #2e844a;
+          color: #fff;
+          border-color: #2e844a;
+        }
+        .btn-fetch-all:hover:not(:disabled) { background: #1d5e35; border-color: #1d5e35; }
+
+        .btn-dismiss {
+          background: #f3f2f2;
+          color: #3e3e3c;
+          border-color: #dddbda;
+        }
+        .btn-dismiss:hover:not(:disabled) { background: #e5e5e5; }
+
+        .progress-wrap { margin-top: 10px; }
+
+        .progress-bar-track {
+          height: 6px;
+          background: #e5e5e5;
+          border-radius: 3px;
+          overflow: hidden;
+        }
+
+        .progress-bar-fill {
+          height: 100%;
+          background: #2e844a;
+          border-radius: 3px;
+          width: 0%;
+          transition: width 0.3s ease;
+        }
+
+        .progress-text {
+          font-size: 11px;
+          color: #706e6b;
+          margin-top: 4px;
+        }
+        .progress-text.error { color: #c23934; }
+      </style>
+
+      <div class="toast" id="toast">
+        <div class="header">
+          <span class="title">&#x1F4CA; SOQL Query Result Ready</span>
+          <button class="close-btn" id="close" title="Dismiss">&times;</button>
+        </div>
+        <div class="meta">
+          ${records.length.toLocaleString()} row${records.length !== 1 ? 's' : ''}
+          &bull;
+          ${columns.length} column${columns.length !== 1 ? 's' : ''}
+          ${records[0]?.attributes?.type ? `&bull; <code style="font-size:11px">${records[0].attributes.type}</code>` : ''}
+        </div>
+        ${actionsHtml}
+      </div>
+    `;
+
+    currentToastHost = host;
+
+    const animateClose = (then) => {
+      const toastEl = shadow.getElementById('toast');
+      toastEl.classList.add('closing');
+      toastEl.addEventListener('animationend', () => {
+        host.remove();
+        if (currentToastHost === host) currentToastHost = null;
+        if (then) then();
+      }, { once: true });
+    };
+
+    shadow.getElementById('close').addEventListener('click', () => animateClose());
+    shadow.getElementById('dismiss').addEventListener('click', () => animateClose());
+    shadow.getElementById('download').addEventListener('click', () => {
+      animateClose(() => triggerSoqlDownload(records));
+    });
+
+    const fetchAllBtn = shadow.getElementById('fetchAll');
+    if (fetchAllBtn) {
+      fetchAllBtn.addEventListener('click', () => {
+        fetchAllBtn.disabled = true;
+        shadow.getElementById('download').disabled = true;
+        shadow.getElementById('dismiss').disabled = true;
+        shadow.getElementById('close').disabled = true;
+        shadow.getElementById('progressWrap').style.display = 'block';
+
+        fetchAllSoqlRows(records, nextRecordsUrl, totalSize, {
+          onProgress(fetched, total) {
+            const pct = total > 0 ? Math.min(100, Math.round((fetched / total) * 100)) : 0;
+            shadow.getElementById('progressFill').style.width = pct + '%';
+            shadow.getElementById('progressText').textContent =
+              `Fetching… ${fetched.toLocaleString()} / ${total.toLocaleString()} rows (${pct}%)`;
+          },
+          onDone(allRecords) {
+            animateClose(() => triggerSoqlDownload(allRecords));
+          },
+          onError(message) {
+            shadow.getElementById('progressFill').style.width = '0%';
+            const pt = shadow.getElementById('progressText');
+            pt.textContent = message;
+            pt.classList.add('error');
+            shadow.getElementById('download').disabled = false;
+            shadow.getElementById('dismiss').disabled = false;
+            shadow.getElementById('close').disabled = false;
+            fetchAllBtn.textContent = 'Retry';
+            fetchAllBtn.disabled = false;
+          },
+        });
+      });
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Query accumulator
   // ─────────────────────────────────────────────────────────────────────────────
@@ -594,6 +976,12 @@
   // We accumulate by queryId.  When returnedRows >= rowCount we know we're done.
 
   const store = new Map(); // queryId → accumulated entry
+
+  // Most recently captured Authorization header from a SOQL REST XHR request.
+  // Re-used when paginating through nextRecordsUrl in fetchAllSoqlRows because
+  // our _origFetch calls don't carry the session cookie alone — the Dev Console
+  // REST endpoint requires an explicit "Authorization: OAuth <sessionId>" header.
+  let _soqlAuthHeader = null;
 
   function processResponse(data, requestUrl, auraInfo = null) {
     if (!isDCQueryResponse(data)) return;
@@ -676,6 +1064,41 @@
     }
   }
 
+  /**
+   * Process a REST SOQL response (Developer Console Query Editor only).
+   *
+   * Three URL-based guards prevent false positives:
+   *
+   *  1. Tooling API  — background queries in the Developer Console use
+   *     /services/data/vXX/tooling/query/ instead of /query/.
+   *
+   *  2. Metadata preflight — when the user clicks Execute the Dev Console
+   *     first fires a request with &columns=true that returns column metadata,
+   *     not records.  The actual record response comes in a second request
+   *     without that parameter.
+   *
+   *  3. Continuation fetches — nextRecordsUrl paths like /query/01g…-2000 are
+   *     fetched internally by fetchAllSoqlRows; intercepting them here would
+   *     produce duplicate toasts.
+   */
+  function processSoqlResponse(data, requestUrl) {
+    if (!isSoqlQueryResponse(data)) return;
+    if (data.records.length === 0) return;
+
+    if (typeof requestUrl === 'string') {
+      if (/\/tooling\/query[/?]/.test(requestUrl)) return;         // 1. Tooling API
+      if (/[?&]columns=true/.test(requestUrl)) return;             // 2. Metadata preflight
+      if (/\/query\/[A-Za-z0-9]+-\d+/.test(requestUrl)) return;   // 3. Continuation fetch
+    }
+
+    const columns = data.records[0]
+      ? Object.keys(data.records[0]).filter((k) => k !== 'attributes')
+      : [];
+
+    showSoqlToast(data);
+    postBadgeMessage(data.records.length, columns.length);
+  }
+
   /** Notify the ISOLATED world bridge so it can update the extension badge. */
   function postBadgeMessage(rowCount, colCount) {
     window.postMessage(
@@ -709,7 +1132,10 @@
       response
         .clone()
         .json()
-        .then((data) => processResponse(data, requestUrl, auraInfo))
+        .then((data) => {
+          processResponse(data, requestUrl, auraInfo);
+          processSoqlResponse(data, requestUrl);
+        })
         .catch(() => {}); // ignore non-JSON or parse errors
     } catch (_) {}
 
@@ -729,6 +1155,20 @@
     return _origOpen.apply(this, args);
   };
 
+  const _origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    // Capture the Authorization header from SOQL REST requests so fetchAllSoqlRows
+    // can replay it on nextRecordsUrl continuation GETs.
+    if (
+      name.toLowerCase() === 'authorization' &&
+      typeof this[NS + '_url'] === 'string' &&
+      /\/services\/data\//.test(this[NS + '_url'])
+    ) {
+      _soqlAuthHeader = value;
+    }
+    return _origSetRequestHeader.apply(this, arguments);
+  };
+
   XMLHttpRequest.prototype.send = function (...args) {
     // args[0] is the request body — a plain string for form-encoded Aura POSTs
     this[NS + '_auraInfo'] = extractAuraInfo(args[0] ?? null, this[NS + '_url']);
@@ -738,7 +1178,9 @@
       const ct = this.getResponseHeader('content-type') || '';
       if (!ct.includes('json')) return;
       try {
-        processResponse(JSON.parse(this.responseText), this[NS + '_url'], this[NS + '_auraInfo']);
+        const parsed = JSON.parse(this.responseText);
+        processResponse(parsed, this[NS + '_url'], this[NS + '_auraInfo']);
+        processSoqlResponse(parsed, this[NS + '_url']);
       } catch (_) {}
     });
     return _origSend.apply(this, args);
