@@ -133,6 +133,13 @@ window.__SF_DC_TOAST__ = (function () {
     }
     .btn-dismiss:hover:not(:disabled) { background: #e5e5e5; }
 
+    .btn-copy {
+      background: #fff;
+      color: #706e6b;
+      border-color: #dddbda;
+    }
+    .btn-copy:hover:not(:disabled) { background: #f3f2f2; }
+
     .progress-wrap { margin-top: 10px; }
 
     .progress-bar-track {

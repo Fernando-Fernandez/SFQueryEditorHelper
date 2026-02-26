@@ -129,8 +129,12 @@
       .trim();
   }
 
-  // CSV helpers live in content-csv.js (loaded before this file).
-  const { getColumnNames, triggerDownload, triggerSoqlDownload } = window.__SF_DC_CSV__;
+  // CSV/TSV helpers live in content-csv.js (loaded before this file).
+  const {
+    getColumnNames,
+    buildTSV, buildTSVFromSoqlRecords,
+    triggerDownload, triggerSoqlDownload,
+  } = window.__SF_DC_CSV__;
 
   /**
    * Fetch all rows by re-submitting paginated Aura requests to the same
@@ -333,6 +337,7 @@
         <div class="actions">
           ${canFetchAll ? `<button class="btn btn-fetch-all" id="fetchAll">Fetch all ${acc.totalRows.toLocaleString()} rows</button>` : ''}
           <button class="btn btn-download-limited" id="download">Download ${acc.returnedRows.toLocaleString()} rows</button>
+          <button class="btn btn-copy" id="copy">Copy ${acc.returnedRows.toLocaleString()} rows</button>
           <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
         </div>
         <div class="progress-wrap" id="progressWrap" style="display:none">
@@ -342,6 +347,7 @@
       : `
         <div class="actions">
           <button class="btn btn-download" id="download">Download CSV</button>
+          <button class="btn btn-copy" id="copy">Copy</button>
           <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
         </div>`;
 
@@ -357,6 +363,7 @@
     currentToastHost = host;
 
     const animateClose = (then) => {
+      _escapeDismiss = null;
       const toastEl = shadow.getElementById('toast');
       toastEl.classList.add('closing');
       toastEl.addEventListener('animationend', () => {
@@ -365,11 +372,25 @@
         if (then) then();
       }, { once: true });
     };
+    _escapeDismiss = animateClose;
 
     shadow.getElementById('close').addEventListener('click', () => animateClose());
     shadow.getElementById('dismiss').addEventListener('click', () => animateClose());
     shadow.getElementById('download').addEventListener('click', () => {
       animateClose(() => triggerDownload(acc));
+    });
+    shadow.getElementById('copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(buildTSV(acc)).then(() => {
+        const copyBtn = shadow.getElementById('copy');
+        copyBtn.textContent = '✓ Copied!';
+        copyBtn.disabled = true;
+        shadow.getElementById('download').disabled = true;
+        shadow.getElementById('dismiss').disabled = true;
+        shadow.getElementById('close').disabled = true;
+        setTimeout(() => animateClose(), 1_500);
+      }).catch(() => {
+        shadow.getElementById('copy').textContent = 'Copy failed';
+      });
     });
 
     const fetchAllBtn = shadow.getElementById('fetchAll');
@@ -378,6 +399,7 @@
         // Lock UI while fetching
         fetchAllBtn.disabled = true;
         shadow.getElementById('download').disabled = true;
+        shadow.getElementById('copy').disabled = true;
         shadow.getElementById('dismiss').disabled = true;
         shadow.getElementById('close').disabled = true;
         shadow.getElementById('progressWrap').style.display = 'block';
@@ -397,7 +419,11 @@
               returnedRows: allRows.length,
               totalRows: allRows.length,
             };
-            animateClose(() => triggerDownload(fullAcc));
+            shadow.getElementById('progressFill').style.width = '100%';
+            shadow.getElementById('progressText').textContent =
+              `✓ ${allRows.length.toLocaleString()} rows ready — downloading…`;
+            triggerDownload(fullAcc);
+            setTimeout(() => animateClose(), 1_500);
           },
           onError(message) {
             shadow.getElementById('progressFill').style.width = '0%';
@@ -406,6 +432,7 @@
             pt.classList.add('error');
             // Re-enable fallback controls
             shadow.getElementById('download').disabled = false;
+            shadow.getElementById('copy').disabled = false;
             shadow.getElementById('dismiss').disabled = false;
             shadow.getElementById('close').disabled = false;
             fetchAllBtn.textContent = 'Retry';
@@ -447,6 +474,7 @@
         <div class="actions">
           ${canFetchAll ? `<button class="btn btn-fetch-all" id="fetchAll">Fetch all ${totalSize.toLocaleString()} rows</button>` : ''}
           <button class="btn btn-download-limited" id="download">Download ${records.length.toLocaleString()} rows</button>
+          <button class="btn btn-copy" id="copy">Copy ${records.length.toLocaleString()} rows</button>
           <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
         </div>
         <div class="progress-wrap" id="progressWrap" style="display:none">
@@ -456,6 +484,7 @@
       : `
         <div class="actions">
           <button class="btn btn-download" id="download">Download CSV</button>
+          <button class="btn btn-copy" id="copy">Copy</button>
           <button class="btn btn-dismiss" id="dismiss">Dismiss</button>
         </div>`;
 
@@ -471,6 +500,7 @@
     currentToastHost = host;
 
     const animateClose = (then) => {
+      _escapeDismiss = null;
       const toastEl = shadow.getElementById('toast');
       toastEl.classList.add('closing');
       toastEl.addEventListener('animationend', () => {
@@ -479,11 +509,25 @@
         if (then) then();
       }, { once: true });
     };
+    _escapeDismiss = animateClose;
 
     shadow.getElementById('close').addEventListener('click', () => animateClose());
     shadow.getElementById('dismiss').addEventListener('click', () => animateClose());
     shadow.getElementById('download').addEventListener('click', () => {
       animateClose(() => triggerSoqlDownload(records));
+    });
+    shadow.getElementById('copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(buildTSVFromSoqlRecords(records)).then(() => {
+        const copyBtn = shadow.getElementById('copy');
+        copyBtn.textContent = '✓ Copied!';
+        copyBtn.disabled = true;
+        shadow.getElementById('download').disabled = true;
+        shadow.getElementById('dismiss').disabled = true;
+        shadow.getElementById('close').disabled = true;
+        setTimeout(() => animateClose(), 1_500);
+      }).catch(() => {
+        shadow.getElementById('copy').textContent = 'Copy failed';
+      });
     });
 
     const fetchAllBtn = shadow.getElementById('fetchAll');
@@ -491,6 +535,7 @@
       fetchAllBtn.addEventListener('click', () => {
         fetchAllBtn.disabled = true;
         shadow.getElementById('download').disabled = true;
+        shadow.getElementById('copy').disabled = true;
         shadow.getElementById('dismiss').disabled = true;
         shadow.getElementById('close').disabled = true;
         shadow.getElementById('progressWrap').style.display = 'block';
@@ -503,7 +548,11 @@
               `Fetching… ${fetched.toLocaleString()} / ${total.toLocaleString()} rows (${pct}%)`;
           },
           onDone(allRecords) {
-            animateClose(() => triggerSoqlDownload(allRecords));
+            shadow.getElementById('progressFill').style.width = '100%';
+            shadow.getElementById('progressText').textContent =
+              `✓ ${allRecords.length.toLocaleString()} rows ready — downloading…`;
+            triggerSoqlDownload(allRecords);
+            setTimeout(() => animateClose(), 1_500);
           },
           onError(message) {
             shadow.getElementById('progressFill').style.width = '0%';
@@ -511,6 +560,7 @@
             pt.textContent = message;
             pt.classList.add('error');
             shadow.getElementById('download').disabled = false;
+            shadow.getElementById('copy').disabled = false;
             shadow.getElementById('dismiss').disabled = false;
             shadow.getElementById('close').disabled = false;
             fetchAllBtn.textContent = 'Retry';
@@ -546,6 +596,14 @@
   // We arm this flag on the preflight request and consume it on the data response,
   // so only user-initiated tooling queries produce a toast.
   let _toolingQueryArmed = false;
+
+  // Dismiss callback for the currently visible toast.  Set when a toast opens,
+  // cleared when it closes.  A single permanent listener handles Escape for both
+  // DC and SOQL toasts without needing to add/remove listeners on each open.
+  let _escapeDismiss = null;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && _escapeDismiss) _escapeDismiss();
+  });
 
   function processResponse(data, requestUrl, auraInfo = null) {
     if (!isDCQueryResponse(data)) return;

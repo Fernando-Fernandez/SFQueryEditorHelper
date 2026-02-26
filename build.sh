@@ -1,1 +1,1 @@
-zip -r SSFQueryEditorHelper.zip manifest.json LICENSE README.MD *.html *.js images/
+zip -r SFQueryEditorHelper.zip manifest.json LICENSE README.MD *.html *.js images/
